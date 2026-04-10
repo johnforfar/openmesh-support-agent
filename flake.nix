@@ -239,6 +239,21 @@
               };
 
               networking.firewall.allowedTCPPorts = [ 8080 ];
+
+              # ---------------------------------------------------------------
+              # 5. DHCP — REQUIRED for `<name>.container` to be resolvable
+              #    from the host's reverse proxy.
+              #
+              # The host runs dnsmasq with `domain = "container"` and
+              # `expand-hosts = true`. When a container DHCPs an address
+              # from the host's vz-* bridge, dnsmasq learns its hostname
+              # and serves it as `<hostname>.container`. Without DHCP, the
+              # container is invisible to host DNS and the public URL
+              # returns 502.
+              # See ENGINEERING/PIPELINE-LESSONS.md Lesson #6 in openmesh-cli.
+              # ---------------------------------------------------------------
+              services.dhcpcd.enable = true;
+              networking.useDHCP = true;
             };
           };
       };
