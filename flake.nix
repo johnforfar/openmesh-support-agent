@@ -3,6 +3,19 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+    # Doc corpus #1: OpenxAI documentation (45 markdown files in pages/)
+    openxai-docs = {
+      url = "github:OpenxAI-Network/openxai-docs";
+      flake = false;
+    };
+
+    # Doc corpus #2: Openmesh CLI canonical docs
+    # (OPENMESH-SKILLS.md, README.md, src layout, etc)
+    openmesh-cli-docs = {
+      url = "github:johnforfar/openmesh-cli";
+      flake = false;
+    };
   };
 
   outputs = inputs: {
@@ -16,75 +29,19 @@
             requests
           ]);
 
-          backendApp = pkgs.writeText "support-agent-app.py" ''
-            from flask import Flask, jsonify, request
-            import os, psycopg2, requests as http
+          # Read the full RAG backend from the repo (~330 lines).
+          backendApp = pkgs.writeText "support-agent-app.py" (
+            builtins.readFile ./backend/app.py
+          );
 
-            app = Flask(__name__)
-            OLLAMA = "http://127.0.0.1:11434"
-
-            @app.route("/api/health")
-            def health():
-                # postgres
-                pg_status = "unknown"
-                pgvector = False
-                try:
-                    with psycopg2.connect("postgresql:///supportagent?host=/run/postgresql") as conn:
-                        with conn.cursor() as cur:
-                            cur.execute("SELECT 1")
-                            pg_status = "ok"
-                            cur.execute("SELECT extname FROM pg_extension WHERE extname='vector'")
-                            pgvector = cur.fetchone() is not None
-                except Exception as e:
-                    pg_status = f"error: {str(e)[:200]}"
-                # ollama
-                ollama_status = "unknown"
-                models = []
-                try:
-                    r = http.get(f"{OLLAMA}/api/tags", timeout=5)
-                    r.raise_for_status()
-                    models = [m.get("name","") for m in r.json().get("models",[])]
-                    ollama_status = "ok"
-                except Exception as e:
-                    ollama_status = f"error: {str(e)[:200]}"
-                return jsonify({
-                    "status": "ok",
-                    "version": "v2-ollama",
-                    "chat_model": "llama3.2:1b",
-                    "embed_model": "nomic-embed-text",
-                    "chunks_loaded": 0,
-                    "postgres": pg_status,
-                    "pgvector": pgvector,
-                    "ollama": ollama_status,
-                    "models": models,
-                })
-
-            @app.route("/api/chat", methods=["POST"])
-            def chat():
-                data = request.get_json(force=True, silent=True) or {}
-                query = (data.get("query") or "").strip()
-                if not query:
-                    return jsonify({"error": "empty query"}), 400
-                # Direct ollama call, no RAG yet
-                try:
-                    r = http.post(f"{OLLAMA}/api/generate", json={
-                        "model": "llama3.2:1b",
-                        "prompt": query,
-                        "stream": False,
-                        "options": {"temperature": 0.3, "num_predict": 200},
-                    }, timeout=300)
-                    r.raise_for_status()
-                    return jsonify({
-                        "answer": r.json().get("response","").strip(),
-                        "sources": []
-                    })
-                except Exception as e:
-                    return jsonify({"error": str(e)}), 500
-
-            if __name__ == "__main__":
-                print("[support-agent] v2-ollama starting on 127.0.0.1:5000", flush=True)
-                app.run(host="127.0.0.1", port=5000, threaded=True)
-          '';
+          # Multi-source doc corpus paths. The python service walks these
+          # at startup, chunks every .md/.mdx, embeds via nomic-embed-text,
+          # and stores in postgres+pgvector.
+          docsPaths = [
+            "${./docs}"                              # this repo's local docs
+            "${inputs.openxai-docs}/pages"           # OpenxAI Nextra pages (45 files)
+            "${inputs.openmesh-cli-docs}"            # openmesh-cli root (README, SKILLS, etc)
+          ];
         in
         {
           config = {
@@ -164,7 +121,7 @@
             # Backend service
             # ===============================================================
             systemd.services.support-agent = {
-              description = "Openmesh Support Agent (v2-ollama)";
+              description = "Openmesh Support Agent (v3-rag)";
               after = [
                 "postgresql.service"
                 "support-agent-pg-init.service"
@@ -177,6 +134,23 @@
                 "ollama.service"
               ];
               wantedBy = [ "multi-user.target" ];
+
+              environment = {
+                # Multi-source ingestion: colon-separated list of dirs the
+                # python service recursively walks for .md/.mdx files.
+                DOCS_PATHS = lib.concatStringsSep ":" docsPaths;
+                # Peer auth via unix socket — no password.
+                DATABASE_URL = "postgresql:///supportagent?host=/run/postgresql";
+                OLLAMA_URL = "http://127.0.0.1:11434";
+                CHAT_MODEL = "llama3.2:1b";
+                EMBED_MODEL = "nomic-embed-text";
+                EMBED_DIM = "768";
+                TOP_K = "5";
+                PORT = "5000";
+                BIND_HOST = "127.0.0.1";
+                BRAND_NAME = "Openmesh Support Agent";
+              };
+
               serviceConfig = {
                 Type = "simple";
                 ExecStart = "${pythonEnv}/bin/python ${backendApp}";
