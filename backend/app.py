@@ -201,9 +201,18 @@ def discover_docs(roots: Iterable[Path]) -> list[Path]:
 
 
 def ensure_schema() -> None:
-    """Idempotent schema creation. Safe to call on every startup."""
+    """Idempotent schema creation. Safe to call on every startup.
+
+    NOTE: this function does NOT create the pgvector extension. That happens
+    in the postgres `initialScript` defined in flake.nix because creating
+    extensions requires postgres superuser privileges, which the application
+    role (peer-auth as `supportagent`) does not have. The application role
+    only owns the database (via `ensureDBOwnership = true`) and can create
+    its own tables and indexes.
+
+    See `openmesh-cli/ENGINEERING/PIPELINE-LESSONS.md` Lesson #5.
+    """
     with db_connect() as conn, conn.cursor() as cur:
-        cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
         cur.execute(
             f"""
             CREATE TABLE IF NOT EXISTS chunks (

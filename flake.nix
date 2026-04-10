@@ -126,8 +126,7 @@
                   local   all             all                        peer
                 '';
                 # The backend service connects as `supportagent`. Postgres
-                # creates this role on first boot via the initial script
-                # below; subsequent runs are no-ops.
+                # creates this role and database via the ensure* options.
                 ensureDatabases = [ "supportagent" ];
                 ensureUsers = [
                   {
@@ -135,10 +134,18 @@
                     ensureDBOwnership = true;
                   }
                 ];
-                # The pgvector extension is enabled by the backend on every
-                # startup via `CREATE EXTENSION IF NOT EXISTS vector` so we
-                # don't need an initialScript.
               };
+
+              # Enable pgvector on every postgres startup as the postgres
+              # superuser. CREATE EXTENSION requires superuser privilege,
+              # which the application role (peer-auth supportagent) does
+              # not have. Using `postStart` instead of `initialScript` so
+              # the extension is created even on rebuilds where the data
+              # dir already exists from a previous deploy.
+              # See ENGINEERING/PIPELINE-LESSONS.md Lesson #5 in openmesh-cli.
+              systemd.services.postgresql.postStart = lib.mkAfter ''
+                $PSQL -d supportagent -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
+              '';
 
               # ---------------------------------------------------------------
               # 3. Backend RAG service
