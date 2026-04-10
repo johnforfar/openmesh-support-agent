@@ -145,7 +145,11 @@
                 CHAT_MODEL = "llama3.2:1b";
                 EMBED_MODEL = "nomic-embed-text";
                 EMBED_DIM = "768";
-                TOP_K = "5";
+                # TOP_K=3 keeps the prompt small enough for llama3.2:1b on
+                # CPU to respond within the host nginx 60s timeout. With
+                # TOP_K=5 the prompt was ~3k tokens and inference exceeded
+                # the timeout. See PIPELINE-LESSONS.md Lesson #12.
+                TOP_K = "3";
                 PORT = "5000";
                 BIND_HOST = "127.0.0.1";
                 BRAND_NAME = "Openmesh Support Agent";

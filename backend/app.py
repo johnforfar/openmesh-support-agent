@@ -320,7 +320,7 @@ def chat(query: str) -> dict:
             "model": CHAT_MODEL,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": 0.3, "num_predict": 400},
+            "options": {"temperature": 0.3, "num_predict": 250},
         },
         timeout=300,
     )
