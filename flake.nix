@@ -13,17 +13,19 @@
           pythonEnv = pkgs.python3.withPackages (ps: with ps; [
             flask
             psycopg2
+            requests
           ]);
 
           backendApp = pkgs.writeText "support-agent-app.py" ''
-            from flask import Flask, jsonify
-            import os, psycopg2
+            from flask import Flask, jsonify, request
+            import os, psycopg2, requests as http
 
             app = Flask(__name__)
+            OLLAMA = "http://127.0.0.1:11434"
 
             @app.route("/api/health")
             def health():
-                # Confirm postgres reachable + pgvector enabled
+                # postgres
                 pg_status = "unknown"
                 pgvector = False
                 try:
@@ -35,31 +37,75 @@
                             pgvector = cur.fetchone() is not None
                 except Exception as e:
                     pg_status = f"error: {str(e)[:200]}"
-
+                # ollama
+                ollama_status = "unknown"
+                models = []
+                try:
+                    r = http.get(f"{OLLAMA}/api/tags", timeout=5)
+                    r.raise_for_status()
+                    models = [m.get("name","") for m in r.json().get("models",[])]
+                    ollama_status = "ok"
+                except Exception as e:
+                    ollama_status = f"error: {str(e)[:200]}"
                 return jsonify({
                     "status": "ok",
-                    "version": "v1-postgres",
-                    "chat_model": "(none yet)",
-                    "embed_model": "(none yet)",
+                    "version": "v2-ollama",
+                    "chat_model": "llama3.2:1b",
+                    "embed_model": "nomic-embed-text",
                     "chunks_loaded": 0,
                     "postgres": pg_status,
                     "pgvector": pgvector,
+                    "ollama": ollama_status,
+                    "models": models,
                 })
 
             @app.route("/api/chat", methods=["POST"])
             def chat():
-                return jsonify({
-                    "answer": "I am v1-postgres. PostgreSQL with pgvector is connected. Ollama and RAG features will be added next.",
-                    "sources": []
-                })
+                data = request.get_json(force=True, silent=True) or {}
+                query = (data.get("query") or "").strip()
+                if not query:
+                    return jsonify({"error": "empty query"}), 400
+                # Direct ollama call, no RAG yet
+                try:
+                    r = http.post(f"{OLLAMA}/api/generate", json={
+                        "model": "llama3.2:1b",
+                        "prompt": query,
+                        "stream": False,
+                        "options": {"temperature": 0.3, "num_predict": 200},
+                    }, timeout=300)
+                    r.raise_for_status()
+                    return jsonify({
+                        "answer": r.json().get("response","").strip(),
+                        "sources": []
+                    })
+                except Exception as e:
+                    return jsonify({"error": str(e)}), 500
 
             if __name__ == "__main__":
-                print("[support-agent] v1-postgres starting on 127.0.0.1:5000", flush=True)
-                app.run(host="127.0.0.1", port=5000)
+                print("[support-agent] v2-ollama starting on 127.0.0.1:5000", flush=True)
+                app.run(host="127.0.0.1", port=5000, threaded=True)
           '';
         in
         {
           config = {
+            # ===============================================================
+            # Ollama — chat model + embedding model (v2)
+            # Pattern from OpenxAI-Network/xnode-ai-chat/nixos-module.nix
+            # ===============================================================
+            systemd.services.ollama.serviceConfig.DynamicUser = lib.mkForce false;
+            systemd.services.ollama.serviceConfig.ProtectHome = lib.mkForce false;
+            systemd.services.ollama.serviceConfig.StateDirectory = [ "ollama/models" ];
+            services.ollama = {
+              enable = true;
+              user = "ollama";
+              host = "127.0.0.1";
+              port = 11434;
+              loadModels = [
+                "llama3.2:1b"
+                "nomic-embed-text"
+              ];
+            };
+
             # ===============================================================
             # PostgreSQL with pgvector (v1)
             # Peer auth via unix socket — no passwords, no network listener.
@@ -118,15 +164,17 @@
             # Backend service
             # ===============================================================
             systemd.services.support-agent = {
-              description = "Openmesh Support Agent (v1-postgres)";
+              description = "Openmesh Support Agent (v2-ollama)";
               after = [
                 "postgresql.service"
                 "support-agent-pg-init.service"
+                "ollama.service"
                 "network.target"
               ];
               wants = [
                 "postgresql.service"
                 "support-agent-pg-init.service"
+                "ollama.service"
               ];
               wantedBy = [ "multi-user.target" ];
               serviceConfig = {
