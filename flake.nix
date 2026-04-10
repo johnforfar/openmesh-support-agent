@@ -241,19 +241,29 @@
               networking.firewall.allowedTCPPorts = [ 8080 ];
 
               # ---------------------------------------------------------------
-              # 5. DHCP — REQUIRED for `<name>.container` to be resolvable
-              #    from the host's reverse proxy.
+              # 5. DHCP via systemd-networkd — REQUIRED for `<name>.container`
+              #    to be resolvable from the host's reverse proxy.
               #
-              # The host runs dnsmasq with `domain = "container"` and
-              # `expand-hosts = true`. When a container DHCPs an address
-              # from the host's vz-* bridge, dnsmasq learns its hostname
-              # and serves it as `<hostname>.container`. Without DHCP, the
-              # container is invisible to host DNS and the public URL
-              # returns 502.
+              # The host runs dnsmasq with `domain = "container"` and serves
+              # DHCP on the vz-* bridge. When a container DHCPs an address
+              # from this bridge, dnsmasq learns its hostname and serves it
+              # as `<hostname>.container`. Without DHCP, the container is
+              # invisible to host DNS and the public URL returns 502.
+              #
+              # Using systemd-networkd because the host itself uses it
+              # (`useNetworkd = true` in xnode-manager/os/flake.nix:139)
+              # and dhcpcd's nixos option doesn't always start the service.
               # See ENGINEERING/PIPELINE-LESSONS.md Lesson #6 in openmesh-cli.
               # ---------------------------------------------------------------
-              networking.useDHCP = true;
-              networking.dhcpcd.enable = true;
+              networking.useNetworkd = true;
+              networking.useDHCP = false;
+              systemd.network = {
+                enable = true;
+                networks."10-host0" = {
+                  matchConfig.Name = "host0";
+                  networkConfig.DHCP = "yes";
+                };
+              };
             };
           };
       };
