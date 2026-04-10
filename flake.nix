@@ -247,10 +247,14 @@
 
               networking.firewall.allowedTCPPorts = [ 8080 ];
 
-              # NOTE: DHCP / .container DNS registration is handled by the
-              # `om` CLI's wrapper flake. We don't configure it here because
-              # the wrapper module would conflict with any local override.
-              # See PIPELINE-LESSONS.md Lesson #6 in openmesh-cli.
+              # Force DHCP enablement at high priority. Something in this
+              # flake (one of the service modules) is suppressing the
+              # wrapper's `networking.dhcpcd.enable = true` and the dhcpcd
+              # unit ends up not existing at all in the system. Forcing
+              # both options explicitly here brings it back.
+              # See PIPELINE-LESSONS.md Lesson #10 in openmesh-cli.
+              networking.useDHCP = lib.mkForce true;
+              networking.dhcpcd.enable = lib.mkForce true;
             };
           };
       };
