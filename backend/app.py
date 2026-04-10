@@ -36,6 +36,7 @@ Design notes for future maintainers and forks:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -45,7 +46,7 @@ from typing import Iterable
 
 import psycopg2
 import requests
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response, stream_with_context
 from psycopg2.extras import execute_values
 
 # ---------------------------------------------------------------------------
@@ -361,6 +362,7 @@ def health():
 
 @app.route("/api/chat", methods=["POST"])
 def chat_endpoint():
+    """Non-streaming JSON chat endpoint (kept for compatibility)."""
     data = request.get_json(force=True, silent=True) or {}
     query = (data.get("query") or "").strip()
     if not query:
@@ -372,6 +374,86 @@ def chat_endpoint():
     except Exception as e:  # noqa: BLE001
         log(f"chat error: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/chat/stream", methods=["POST"])
+def chat_stream_endpoint():
+    """Server-Sent Events streaming endpoint.
+
+    Sends three event types:
+        sources: <json>     once at the start, the retrieved chunks
+        token:   <text>     repeatedly, individual model output tokens
+        done:    {}         when the model finishes
+        error:   <text>     if anything fails
+
+    The frontend can render tokens as they arrive instead of waiting for the
+    full response — much better UX for slow CPU LLMs.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    query = (data.get("query") or "").strip()
+    if not query:
+        return jsonify({"error": "empty query"}), 400
+    if len(query) > 2000:
+        return jsonify({"error": "query too long (max 2000 chars)"}), 400
+
+    def generate():
+        try:
+            chunks = retrieve(query)
+            sources_payload = json.dumps(
+                [
+                    {
+                        "source": c["source"],
+                        "chunk_index": c["chunk_index"],
+                        "distance": c["distance"],
+                    }
+                    for c in chunks
+                ]
+            )
+            yield f"event: sources\ndata: {sources_payload}\n\n"
+
+            prompt = build_prompt(query, chunks)
+            with requests.post(
+                f"{OLLAMA_URL}/api/generate",
+                json={
+                    "model": CHAT_MODEL,
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {"temperature": 0.3, "num_predict": 250},
+                },
+                stream=True,
+                timeout=600,
+            ) as r:
+                r.raise_for_status()
+                for line in r.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    token = obj.get("response", "")
+                    if token:
+                        # Escape newlines for SSE format (multi-line data
+                        # would otherwise be parsed as separate fields)
+                        safe = token.replace("\\", "\\\\").replace("\n", "\\n")
+                        yield f"event: token\ndata: {safe}\n\n"
+                    if obj.get("done"):
+                        yield "event: done\ndata: {}\n\n"
+                        return
+        except Exception as e:  # noqa: BLE001
+            log(f"chat stream error: {e}")
+            err = json.dumps({"error": str(e)})
+            yield f"event: error\ndata: {err}\n\n"
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # tells nginx not to buffer
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -307,7 +307,18 @@
       border-radius: 4px;
       margin: 0.2rem 0.3rem 0 0;
       font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      transition: all 0.15s;
     }
+    .sources a {
+      text-decoration: none;
+      color: var(--fg-dim);
+    }
+    .sources a:hover span {
+      border-color: var(--accent-border);
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .msg-body { word-wrap: break-word; }
 
     form {
       display: flex;
@@ -505,53 +516,152 @@
       return html;
     }
 
+    /**
+     * Map a source label like
+     *   "13br0mcw...source/pages/protocol-foundations/overview.md"
+     * back to a clickable github URL. The chunk source labels are nix
+     * store paths because the backend uses the directory the flake input
+     * resolved to. We strip the store hash prefix and infer the repo
+     * from where the directory was mounted.
+     */
+    function sourceUrl(source) {
+      if (!source) return null;
+      // Strip leading store hash like "13br...-source/" or "13br...-docs/"
+      const cleaned = source.replace(/^[a-z0-9]{32}-(?:source|docs)\//, '');
+
+      // Heuristics: if the path starts with `pages/` it came from openxai-docs.
+      // If it's a top-level .md (OPENMESH-SKILLS.md, README.md), it came from openmesh-cli.
+      // Local docs/ go to the openmesh-support-agent repo.
+      if (cleaned.startsWith('pages/')) {
+        const rel = cleaned.slice('pages/'.length);
+        return `https://github.com/OpenxAI-Network/openxai-docs/blob/main/pages/${rel}`;
+      }
+      if (cleaned === 'OPENMESH-SKILLS.md' || cleaned === 'README.md' || cleaned === 'OPEN-SOURCE-FIXES.md') {
+        return `https://github.com/johnforfar/openmesh-cli/blob/main/${cleaned}`;
+      }
+      if (cleaned.endsWith('.md') && !cleaned.includes('/')) {
+        // Top-level .md not matched above -> openmesh-cli root
+        return `https://github.com/johnforfar/openmesh-cli/blob/main/${cleaned}`;
+      }
+      // Local docs/* from this repo
+      return `https://github.com/johnforfar/openmesh-support-agent/blob/main/docs/${cleaned}`;
+    }
+
+    function sourceLabel(source) {
+      if (!source) return '?';
+      // Strip the nix store hash prefix for display
+      return source.replace(/^[a-z0-9]{32}-(?:source|docs)\//, '');
+    }
+
+    function renderSources(container, sources) {
+      const src = document.createElement('div');
+      src.className = 'sources';
+      const linksHtml = sources.map(s => {
+        const url = sourceUrl(s.source || s);
+        const label = sourceLabel(s.source || s);
+        if (url) {
+          return `<a href="${url}" target="_blank" rel="noopener"><span>${escapeHtml(label)}</span></a>`;
+        }
+        return `<span>${escapeHtml(label)}</span>`;
+      }).join('');
+      src.innerHTML = '<strong>sources:</strong> ' + linksHtml;
+      container.appendChild(src);
+    }
+
     function addMessage(role, text, sources) {
       const div = document.createElement('div');
       div.className = `msg ${role}`;
       div.innerHTML = renderMarkdown(text);
       if (sources && sources.length) {
-        const src = document.createElement('div');
-        src.className = 'sources';
-        src.innerHTML = '<strong>sources:</strong> ' +
-          sources.map(s => `<span>${escapeHtml(s.source || s)}</span>`).join('');
-        div.appendChild(src);
+        renderSources(div, sources);
       }
       messagesEl.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth', block: 'end' });
       return div;
     }
 
-    function addTyping() {
+    function addStreamingMessage() {
       const div = document.createElement('div');
       div.className = 'msg assistant';
-      div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+      const body = document.createElement('div');
+      body.className = 'msg-body';
+      body.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+      div.appendChild(body);
       messagesEl.appendChild(div);
       div.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      return div;
+      return { div, body };
     }
 
+    /**
+     * Stream chat response via SSE. Uses fetch + ReadableStream to parse
+     * SSE manually because EventSource doesn't support POST bodies.
+     */
     async function ask(query) {
       addMessage('user', query);
       queryEl.value = '';
       queryEl.disabled = true;
       sendBtn.disabled = true;
-      const typing = addTyping();
+      const { div, body } = addStreamingMessage();
+      let accumulated = '';
+      let sources = null;
+      let firstToken = true;
+
       try {
-        const r = await fetch('/api/chat', {
+        const r = await fetch('/api/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ query })
         });
-        const data = await r.json();
-        typing.remove();
-        if (data.error) {
-          addMessage('error', `Error: ${data.error}`);
-        } else {
-          addMessage('assistant', data.answer || '(no response)', data.sources);
+        if (!r.ok || !r.body) {
+          throw new Error(`HTTP ${r.status}`);
+        }
+
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          // SSE messages are separated by \n\n
+          let idx;
+          while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const raw = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+
+            let event = 'message';
+            let data = '';
+            for (const line of raw.split('\n')) {
+              if (line.startsWith('event: ')) event = line.slice(7);
+              else if (line.startsWith('data: ')) data += (data ? '\n' : '') + line.slice(6);
+            }
+
+            if (event === 'sources') {
+              try { sources = JSON.parse(data); } catch (e) {}
+            } else if (event === 'token') {
+              if (firstToken) {
+                body.innerHTML = '';
+                firstToken = false;
+              }
+              accumulated += data.replace(/\\n/g, '\n').replace(/\\\\/g, '\\');
+              body.innerHTML = renderMarkdown(accumulated);
+              div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+            } else if (event === 'done') {
+              if (sources && sources.length) renderSources(div, sources);
+            } else if (event === 'error') {
+              try {
+                const err = JSON.parse(data);
+                body.innerHTML = `<span style="color:var(--error);">Error: ${escapeHtml(err.error || 'unknown')}</span>`;
+              } catch (e) {
+                body.innerHTML = `<span style="color:var(--error);">Error: ${escapeHtml(data)}</span>`;
+              }
+            }
+          }
         }
       } catch (e) {
-        typing.remove();
-        addMessage('error', `Network error: ${e.message}`);
+        body.innerHTML = `<span style="color:var(--error);">Network error: ${escapeHtml(e.message)}</span>`;
       } finally {
         queryEl.disabled = false;
         sendBtn.disabled = false;

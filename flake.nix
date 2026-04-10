@@ -185,7 +185,12 @@
                   proxyPass = "http://127.0.0.1:5000";
                   extraConfig = ''
                     proxy_buffering off;
+                    proxy_cache off;
+                    proxy_set_header Connection "";
+                    proxy_http_version 1.1;
+                    chunked_transfer_encoding on;
                     proxy_read_timeout 300s;
+                    proxy_send_timeout 300s;
                   '';
                 };
               };
