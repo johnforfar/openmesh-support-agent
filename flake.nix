@@ -91,9 +91,12 @@
                   "nomic-embed-text"
                 ];
               };
-              systemd.services.ollama-model-loader.serviceConfig.User = "ollama";
-              systemd.services.ollama-model-loader.serviceConfig.Group = "ollama";
-              systemd.services.ollama-model-loader.serviceConfig.DynamicUser = lib.mkForce false;
+              # Don't override the model-loader User/Group/DynamicUser. The
+              # canonical openclaw setup leaves the model loader at its
+              # nixpkgs default. Setting User=ollama here causes the loader
+              # script to call `su - <model-name>` which fails with "this
+              # account is currently not available". See PIPELINE-LESSONS.md
+              # Lesson #10.
 
               # ---------------------------------------------------------------
               # 2. PostgreSQL with pgvector
@@ -115,8 +118,9 @@
                 enable = true;
                 package = pkgs.postgresql_16;
                 # The pgvector extension provides the `vector` column type
-                # used by the chunks table.
-                extraPlugins = ps: with ps; [ pgvector ];
+                # used by the chunks table. (`extensions` not `extraPlugins`
+                # in this nixpkgs version.)
+                extensions = ps: with ps; [ pgvector ];
                 # Bind to the local Unix socket only — no TCP listener.
                 # No password is needed because authentication is by Unix
                 # peer (matching OS user to db user).
@@ -142,9 +146,12 @@
               # not have. Using `postStart` instead of `initialScript` so
               # the extension is created even on rebuilds where the data
               # dir already exists from a previous deploy.
-              # See ENGINEERING/PIPELINE-LESSONS.md Lesson #5 in openmesh-cli.
+              #
+              # NOTE: openclaw/nixpkgs (Jan 2026) does NOT export $PSQL as
+              # an env var inside postStart, so we use the explicit binary
+              # path. See ENGINEERING/PIPELINE-LESSONS.md Lesson #5+#10.
               systemd.services.postgresql.postStart = lib.mkAfter ''
-                $PSQL -d supportagent -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
+                ${pkgs.postgresql_16}/bin/psql -d supportagent -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
               '';
 
               # ---------------------------------------------------------------
