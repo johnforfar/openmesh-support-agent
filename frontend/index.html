@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Openmesh Support Agent</title>
+  <meta name="description" content="Ask questions about the Openmesh CLI, sovereign Xnodes, and Claude Code integration. RAG-powered, runs entirely on a sovereign decentralized node — no SaaS, no telemetry.">
+  <style>
+    :root {
+      --bg: #0b0d10;
+      --bg-elev: #14181d;
+      --bg-elev-2: #1c2128;
+      --fg: #e6edf3;
+      --fg-dim: #8b949e;
+      --accent: #58a6ff;
+      --accent-bg: #1f3a5c;
+      --user-bg: #2d333b;
+      --border: #30363d;
+      --code-bg: #161b22;
+      --error: #f85149;
+      --success: #3fb950;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elev);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    header h1 {
+      font-size: 1.1rem;
+      margin: 0;
+      font-weight: 600;
+    }
+    header h1 .accent { color: var(--accent); }
+    header .meta {
+      font-size: 0.78rem;
+      color: var(--fg-dim);
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      max-width: 880px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 1.5rem;
+      gap: 1rem;
+    }
+    #messages {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-height: 200px;
+    }
+    .msg {
+      padding: 1rem 1.25rem;
+      border-radius: 12px;
+      line-height: 1.55;
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .msg.user {
+      background: var(--user-bg);
+      align-self: flex-end;
+      max-width: 80%;
+    }
+    .msg.assistant {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+      max-width: 100%;
+    }
+    .msg.system {
+      background: var(--accent-bg);
+      border: 1px solid var(--accent);
+      color: var(--fg);
+      font-size: 0.9rem;
+    }
+    .msg.error {
+      background: rgba(248, 81, 73, 0.1);
+      border: 1px solid var(--error);
+      color: var(--error);
+    }
+    .msg pre {
+      background: var(--code-bg);
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+      margin: 0.5rem 0;
+    }
+    .msg code {
+      background: var(--code-bg);
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      font-size: 0.88em;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    .msg pre code { background: none; padding: 0; }
+    .sources {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--fg-dim);
+    }
+    .sources strong { color: var(--fg); }
+    .sources span {
+      display: inline-block;
+      background: var(--code-bg);
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      margin: 0.15rem 0.25rem 0 0;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    }
+    form {
+      display: flex;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+    input[type="text"] {
+      flex: 1;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      font-size: 1rem;
+      font-family: inherit;
+    }
+    input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    button {
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 8px;
+      padding: 0 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .examples {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin: 0.5rem 0;
+    }
+    .examples button {
+      background: var(--bg-elev-2);
+      color: var(--fg);
+      font-size: 0.82rem;
+      font-weight: 400;
+      padding: 0.5rem 0.85rem;
+      border: 1px solid var(--border);
+    }
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      border-top: 1px solid var(--border);
+      color: var(--fg-dim);
+      font-size: 0.85rem;
+    }
+    footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    footer a:hover { text-decoration: underline; }
+    .typing {
+      display: inline-flex;
+      gap: 4px;
+    }
+    .typing span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--fg-dim);
+      animation: bounce 1.4s infinite ease-in-out;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🟢 <span class="accent">Openmesh</span> Support Agent</h1>
+    <div class="meta" id="health">connecting...</div>
+  </header>
+
+  <main>
+    <div id="messages">
+      <div class="msg system">
+        Hi! I'm a RAG-powered support agent running entirely on a sovereign Openmesh Xnode. I can answer questions about the <code>om</code> CLI, deployment patterns, error codes, NixOS containers, and Claude Code integration. Ask me anything below.
+      </div>
+      <div class="examples" id="examples">
+        <button data-q="How do I deploy an app to my Xnode?">Deploy an app</button>
+        <button data-q="What's the difference between om app deploy and om app expose?">deploy vs expose</button>
+        <button data-q="How do I expose an app on a public subdomain?">Expose on subdomain</button>
+        <button data-q="What does the error code E_SESSION_EXPIRED mean?">Error codes</button>
+        <button data-q="How does Claude Code use this CLI?">Claude Code skill</button>
+      </div>
+    </div>
+
+    <form id="chatForm">
+      <input
+        id="query"
+        type="text"
+        placeholder="Ask a question about Openmesh, the om CLI, or Xnode deployment..."
+        autocomplete="off"
+        autofocus
+        required
+        maxlength="2000"
+      >
+      <button type="submit" id="sendBtn">Ask</button>
+    </form>
+  </main>
+
+  <footer>
+    Deployed with <strong>Openmesh CLI v2.0</strong> via <a href="https://claude.com/claude-code" target="_blank" rel="noopener">Claude Code</a> — <a href="https://github.com/johnforfar" target="_blank" rel="noopener">John Forfar</a>
+    <br>
+    <span style="font-size: 0.78rem;">RAG over Openmesh + OpenxAI docs · llama3.2 + nomic-embed-text · postgres + pgvector · 100% sovereign</span>
+  </footer>
+
+  <script>
+    const messagesEl = document.getElementById('messages');
+    const formEl = document.getElementById('chatForm');
+    const queryEl = document.getElementById('query');
+    const sendBtn = document.getElementById('sendBtn');
+    const healthEl = document.getElementById('health');
+
+    // ---- minimal markdown rendering (safe-ish, escape first) ----
+    function escapeHtml(s) {
+      return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+    function renderMarkdown(text) {
+      let html = escapeHtml(text);
+      // fenced code blocks
+      html = html.replace(/```([\s\S]*?)```/g, (_, code) => `<pre><code>${code.trim()}</code></pre>`);
+      // inline code
+      html = html.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+      // bold
+      html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      // line breaks
+      html = html.replace(/\n/g, '<br>');
+      return html;
+    }
+
+    function addMessage(role, text, sources) {
+      const div = document.createElement('div');
+      div.className = `msg ${role}`;
+      div.innerHTML = renderMarkdown(text);
+      if (sources && sources.length) {
+        const src = document.createElement('div');
+        src.className = 'sources';
+        src.innerHTML = '<strong>sources:</strong> ' +
+          sources.map(s => `<span>${escapeHtml(s.source)}</span>`).join('');
+        div.appendChild(src);
+      }
+      messagesEl.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return div;
+    }
+
+    function addTyping() {
+      const div = document.createElement('div');
+      div.className = 'msg assistant';
+      div.innerHTML = '<div class="typing"><span></span><span></span><span></span></div>';
+      messagesEl.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      return div;
+    }
+
+    async function ask(query) {
+      addMessage('user', query);
+      queryEl.value = '';
+      queryEl.disabled = true;
+      sendBtn.disabled = true;
+      const typing = addTyping();
+      try {
+        const r = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query })
+        });
+        const data = await r.json();
+        typing.remove();
+        if (data.error) {
+          addMessage('error', `Error: ${data.error}`);
+        } else {
+          addMessage('assistant', data.answer || '(no response)', data.sources);
+        }
+      } catch (e) {
+        typing.remove();
+        addMessage('error', `Network error: ${e.message}`);
+      } finally {
+        queryEl.disabled = false;
+        sendBtn.disabled = false;
+        queryEl.focus();
+      }
+    }
+
+    formEl.addEventListener('submit', e => {
+      e.preventDefault();
+      const q = queryEl.value.trim();
+      if (q) ask(q);
+    });
+
+    document.querySelectorAll('#examples button').forEach(btn => {
+      btn.addEventListener('click', () => ask(btn.dataset.q));
+    });
+
+    // ---- health check ----
+    fetch('/api/health')
+      .then(r => r.json())
+      .then(d => {
+        healthEl.textContent =
+          `${d.chat_model} · ${d.chunks_loaded} chunks loaded`;
+      })
+      .catch(() => {
+        healthEl.textContent = 'agent not ready';
+      });
+  </script>
+</body>
+</html>

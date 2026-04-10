@@ -1,0 +1,22 @@
+# Local engineering notes (not pushed)
+ENGINEERING/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+
+# Nix
+result
+result-*
+.direnv/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
