@@ -1,0 +1,58 @@
+{
+  "nodes": {
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1775710090,
+        "narHash": "sha256-WGjBfvXv/mcg5yBg+AtK1Q3FHyXfjAAeJROmg7DLYfM=",
+        "rev": "4c1018dae018162ec878d42fec712642d214fdfa",
+        "type": "tarball",
+        "url": "https://releases.nixos.org/nixos/unstable/nixos-26.05pre977467.4c1018dae018/nixexprs.tar.xz"
+      },
+      "original": {
+        "type": "tarball",
+        "url": "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz"
+      }
+    },
+    "openmesh-cli-docs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775799923,
+        "narHash": "sha256-Qu7ACJFLNpROnFLMi8kNlLa9jr4dzg902uws0Oo8WfI=",
+        "owner": "johnforfar",
+        "repo": "openmesh-cli",
+        "rev": "720c8a3b848f56183a83e315c48f8fe17104cbad",
+        "type": "github"
+      },
+      "original": {
+        "owner": "johnforfar",
+        "repo": "openmesh-cli",
+        "type": "github"
+      }
+    },
+    "openxai-docs": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1760607525,
+        "narHash": "sha256-dGaGHhivO+2gWsWZAAS1h5w5OFjK9sjqzURQ2fS6CqI=",
+        "owner": "OpenxAI-Network",
+        "repo": "openxai-docs",
+        "rev": "4ed6512d10aebf2d230e30e221c0273bf36399e9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "OpenxAI-Network",
+        "repo": "openxai-docs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "nixpkgs": "nixpkgs",
+        "openmesh-cli-docs": "openmesh-cli-docs",
+        "openxai-docs": "openxai-docs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
