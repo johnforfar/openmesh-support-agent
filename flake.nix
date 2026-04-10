@@ -252,8 +252,8 @@
               # returns 502.
               # See ENGINEERING/PIPELINE-LESSONS.md Lesson #6 in openmesh-cli.
               # ---------------------------------------------------------------
-              services.dhcpcd.enable = true;
               networking.useDHCP = true;
+              networking.dhcpcd.enable = true;
             };
           };
       };
