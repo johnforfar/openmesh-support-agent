@@ -65,7 +65,18 @@
             config = {
               # ---------------------------------------------------------------
               # 1. Ollama — chat model + embedding model
+              #
+              # The configuration here mirrors the canonical
+              # `OpenxAI-Network/xnode-ai-chat/nixos-module.nix:48-61` setup
+              # which is known to work in an xnode-manager container. The
+              # `mkForce DynamicUser = false` + explicit StateDirectory is
+              # the only combination that lets ollama create its own state
+              # dir under the older nixpkgs that xnode-manager pins.
+              # See ENGINEERING/PIPELINE-LESSONS.md Lesson #4 in openmesh-cli.
               # ---------------------------------------------------------------
+              systemd.services.ollama.serviceConfig.DynamicUser = lib.mkForce false;
+              systemd.services.ollama.serviceConfig.ProtectHome = lib.mkForce false;
+              systemd.services.ollama.serviceConfig.StateDirectory = [ "ollama/models" ];
               services.ollama = {
                 enable = true;
                 user = "ollama";
@@ -80,6 +91,9 @@
                   "nomic-embed-text"
                 ];
               };
+              systemd.services.ollama-model-loader.serviceConfig.User = "ollama";
+              systemd.services.ollama-model-loader.serviceConfig.Group = "ollama";
+              systemd.services.ollama-model-loader.serviceConfig.DynamicUser = lib.mkForce false;
 
               # ---------------------------------------------------------------
               # 2. PostgreSQL with pgvector
@@ -179,6 +193,13 @@
               # ---------------------------------------------------------------
               # 4. nginx — serves the static frontend on /, proxies /api/* to
               #    the Python backend on localhost:5000
+              #
+              # IMPORTANT: nixos-containers share the host's network namespace.
+              # We MUST NOT bind port 80 (the host's nginx already owns it).
+              # Internal services use 8080+ and the host reverse proxy is
+              # configured (via `om app expose --port 8080`) to forward
+              # public traffic from chat.<domain>:443 → support-agent.container:8080.
+              # See ENGINEERING/PIPELINE-LESSONS.md Lesson #4 in openmesh-cli.
               # ---------------------------------------------------------------
               services.nginx = {
                 enable = true;
@@ -191,7 +212,7 @@
                   listen = [
                     {
                       addr = "0.0.0.0";
-                      port = 80;
+                      port = 8080;
                     }
                   ];
                   # Frontend is a single index.html with inline CSS+JS
@@ -210,11 +231,7 @@
                 };
               };
 
-              # The xnode-manager reverse proxy will route public traffic
-              # from chat.<your-subdomain>.openmesh.cloud here. Port 80 is
-              # internal to the container; the public-facing TLS termination
-              # happens on the host nginx.
-              networking.firewall.allowedTCPPorts = [ 80 ];
+              networking.firewall.allowedTCPPorts = [ 8080 ];
             };
           };
       };
