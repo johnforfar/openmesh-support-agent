@@ -2,8 +2,9 @@
   description = "Openmesh Support Agent — RAG-powered docs assistant for sovereign Xnodes";
 
   inputs = {
-    # Use unstable for the latest pgvector + ollama
-    nixpkgs.url = "https://channels.nixos.org/nixos-unstable/nixexprs.tar.xz";
+    # Use the github flake URL (not the channels.nixos.org tarball) so the
+    # input is a real flake and nix's input-addressable cache stays sane.
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
     # Doc corpus #1: OpenxAI documentation (45 markdown files)
     # This is the official OpenxAI docs site, packaged as a Next.js app.
