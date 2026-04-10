@@ -88,17 +88,46 @@
               ];
             };
 
-            systemd.services.postgresql.postStart = lib.mkAfter ''
-              ${pkgs.postgresql_16}/bin/psql -d supportagent -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
-            '';
+            # Enable pgvector AFTER postgresql-setup has created the
+            # supportagent database. We can't use postgres.postStart for
+            # this because postStart runs immediately after postgres comes
+            # up, BEFORE postgresql-setup creates the database — so the
+            # connection fails with "database does not exist" and the
+            # postgres service is killed.
+            #
+            # A separate oneshot that orders after postgresql-setup is
+            # the correct pattern.
+            # See PIPELINE-LESSONS.md Lesson #11.
+            systemd.services.support-agent-pg-init = {
+              description = "Enable pgvector in supportagent database";
+              after = [ "postgresql.service" "postgresql-setup.service" ];
+              requires = [ "postgresql.service" ];
+              wantedBy = [ "multi-user.target" ];
+              serviceConfig = {
+                Type = "oneshot";
+                User = "postgres";
+                RemainAfterExit = true;
+              };
+              script = ''
+                ${pkgs.postgresql_16}/bin/psql -d supportagent \
+                  -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
+              '';
+            };
 
             # ===============================================================
             # Backend service
             # ===============================================================
             systemd.services.support-agent = {
               description = "Openmesh Support Agent (v1-postgres)";
-              after = [ "postgresql.service" "network.target" ];
-              wants = [ "postgresql.service" ];
+              after = [
+                "postgresql.service"
+                "support-agent-pg-init.service"
+                "network.target"
+              ];
+              wants = [
+                "postgresql.service"
+                "support-agent-pg-init.service"
+              ];
               wantedBy = [ "multi-user.target" ];
               serviceConfig = {
                 Type = "simple";
