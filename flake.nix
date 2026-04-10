@@ -1,5 +1,5 @@
 {
-  description = "Openmesh Support Agent — RAG-powered docs assistant for sovereign Xnodes";
+  description = "Openmesh Support Agent — incrementally adding services on top of the proven baseline";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -10,56 +10,109 @@
       default =
         { pkgs, lib, ... }:
         let
-          # Minimal Python env — just enough to serve a static health check
-          # and prove the python service runs alongside nginx in the same
-          # container. We'll add postgres + ollama back in subsequent
-          # commits once the baseline is green.
-          pythonEnv = pkgs.python3.withPackages (ps: with ps; [ flask ]);
+          pythonEnv = pkgs.python3.withPackages (ps: with ps; [
+            flask
+            psycopg2
+          ]);
 
           backendApp = pkgs.writeText "support-agent-app.py" ''
             from flask import Flask, jsonify
+            import os, psycopg2
+
             app = Flask(__name__)
 
             @app.route("/api/health")
             def health():
-                return jsonify({"status": "ok", "version": "v0-baseline"})
+                # Confirm postgres reachable + pgvector enabled
+                pg_status = "unknown"
+                pgvector = False
+                try:
+                    with psycopg2.connect("postgresql:///supportagent?host=/run/postgresql") as conn:
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1")
+                            pg_status = "ok"
+                            cur.execute("SELECT extname FROM pg_extension WHERE extname='vector'")
+                            pgvector = cur.fetchone() is not None
+                except Exception as e:
+                    pg_status = f"error: {str(e)[:200]}"
+
+                return jsonify({
+                    "status": "ok",
+                    "version": "v1-postgres",
+                    "chat_model": "(none yet)",
+                    "embed_model": "(none yet)",
+                    "chunks_loaded": 0,
+                    "postgres": pg_status,
+                    "pgvector": pgvector,
+                })
 
             @app.route("/api/chat", methods=["POST"])
             def chat():
                 return jsonify({
-                    "answer": "I am the baseline support agent. RAG features (postgres + ollama) will be added once the deploy pipeline is green.",
+                    "answer": "I am v1-postgres. PostgreSQL with pgvector is connected. Ollama and RAG features will be added next.",
                     "sources": []
                 })
 
             if __name__ == "__main__":
-                print("[support-agent] starting baseline service on 127.0.0.1:5000", flush=True)
+                print("[support-agent] v1-postgres starting on 127.0.0.1:5000", flush=True)
                 app.run(host="127.0.0.1", port=5000)
           '';
         in
         {
           config = {
-            # ---------------------------------------------------------------
-            # 1. Backend service (Python Flask)
-            # ---------------------------------------------------------------
+            # ===============================================================
+            # PostgreSQL with pgvector (v1)
+            # Peer auth via unix socket — no passwords, no network listener.
+            # See PIPELINE-LESSONS.md Lesson #5 for the postStart pattern.
+            # ===============================================================
+            users.users.supportagent = {
+              isSystemUser = true;
+              group = "supportagent";
+            };
+            users.groups.supportagent = { };
+
+            services.postgresql = {
+              enable = true;
+              package = pkgs.postgresql_16;
+              extensions = ps: with ps; [ pgvector ];
+              enableTCPIP = false;
+              authentication = lib.mkOverride 10 ''
+                local all all peer
+              '';
+              ensureDatabases = [ "supportagent" ];
+              ensureUsers = [
+                {
+                  name = "supportagent";
+                  ensureDBOwnership = true;
+                }
+              ];
+            };
+
+            systemd.services.postgresql.postStart = lib.mkAfter ''
+              ${pkgs.postgresql_16}/bin/psql -d supportagent -tAc 'CREATE EXTENSION IF NOT EXISTS vector;'
+            '';
+
+            # ===============================================================
+            # Backend service
+            # ===============================================================
             systemd.services.support-agent = {
-              description = "Openmesh Support Agent (baseline)";
-              after = [ "network.target" ];
+              description = "Openmesh Support Agent (v1-postgres)";
+              after = [ "postgresql.service" "network.target" ];
+              wants = [ "postgresql.service" ];
               wantedBy = [ "multi-user.target" ];
               serviceConfig = {
                 Type = "simple";
                 ExecStart = "${pythonEnv}/bin/python ${backendApp}";
                 Restart = "on-failure";
                 RestartSec = "10s";
-                DynamicUser = true;
+                User = "supportagent";
+                Group = "supportagent";
               };
             };
 
-            # ---------------------------------------------------------------
-            # 2. nginx — serves the static frontend, proxies /api/* to backend
-            #
-            # Bind to 8080 (NOT 80) — see hello-world for the same pattern.
-            # The host owns port 80; containers must use non-privileged ports.
-            # ---------------------------------------------------------------
+            # ===============================================================
+            # nginx
+            # ===============================================================
             services.nginx = {
               enable = true;
               recommendedGzipSettings = true;
@@ -68,12 +121,7 @@
 
               virtualHosts."default" = {
                 default = true;
-                listen = [
-                  {
-                    addr = "0.0.0.0";
-                    port = 8080;
-                  }
-                ];
+                listen = [{ addr = "0.0.0.0"; port = 8080; }];
                 root = "${./frontend}";
                 locations."/" = {
                   tryFiles = "$uri /index.html";
